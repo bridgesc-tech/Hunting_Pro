@@ -1252,6 +1252,62 @@ class MoonService {
         return 'Waning Crescent';
     }
     
+    getMoonIconSVG(moonPhase) {
+        const size = 24;
+        const center = size / 2;
+        const radius = size / 2 - 2;
+        
+        // Create SVG based on moon phase
+        let svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display: inline-block; vertical-align: middle; margin-right: 6px;">`;
+        
+        switch(moonPhase) {
+            case 'New Moon':
+                // Dark circle (new moon)
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
+                break;
+            case 'Waxing Crescent':
+                // Right side lit (crescent on left)
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 0 ${center} ${center - radius} Z" fill="#ffd700"/>`;
+                break;
+            case 'First Quarter':
+                // Right half lit
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} L ${center} ${center} Z" fill="#ffd700"/>`;
+                break;
+            case 'Waxing Gibbous':
+                // Mostly lit, left side dark
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 1 ${center} ${center - radius} Z" fill="#333"/>`;
+                break;
+            case 'Full Moon':
+                // Fully lit circle
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
+                break;
+            case 'Waning Gibbous':
+                // Mostly lit, right side dark
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 0 ${center} ${center - radius} Z" fill="#333"/>`;
+                break;
+            case 'Last Quarter':
+                // Left half lit
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} L ${center} ${center} Z" fill="#ffd700"/>`;
+                break;
+            case 'Waning Crescent':
+                // Left side lit (crescent on right)
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 1 ${center} ${center - radius} Z" fill="#ffd700"/>`;
+                break;
+            default:
+                // Default to full moon
+                svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
+        }
+        
+        svg += `</svg>`;
+        return svg;
+    }
+    
     calculateDeerActivityScore(temp, windSpeed, moonPhase, hour, sunrise, sunset) {
         let score = 0; // Start from 0 for more disparity
         
@@ -1436,7 +1492,7 @@ class MoonService {
                 <div class="moon-day-section">
                     <div class="moon-day-header">
                         <div class="moon-day-name">${dayName}</div>
-                        <div class="moon-phase">${moonPhase}</div>
+                        <div class="moon-phase">${this.getMoonIconSVG(moonPhase)}${moonPhase}</div>
                     </div>
                     
                     <div class="moon-conditions">
@@ -2710,7 +2766,9 @@ class StandsService {
         }
         
         try {
-            await this.sharingService.shareLocation(location, location.shareCode);
+            // Compress images before sharing to reduce Firebase storage size
+            const compressedLocation = await this.compressLocationImages(location);
+            await this.sharingService.shareLocation(compressedLocation, location.shareCode);
             console.log('Location shared successfully with code:', location.shareCode);
         } catch (error) {
             console.error('Error sharing location:', error);
@@ -3721,6 +3779,103 @@ class StandsService {
             reader.onerror = reject;
             reader.readAsDataURL(file);
         });
+    }
+    
+    // Compress an existing base64 image
+    compressBase64Image(dataUrl, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+        return new Promise((resolve, reject) => {
+            // Skip if already compressed (check if it's a small JPEG)
+            if (dataUrl.startsWith('data:image/jpeg') && dataUrl.length < 100000) {
+                // Likely already compressed, check dimensions
+                const img = new Image();
+                img.onload = () => {
+                    if (img.width <= maxWidth && img.height <= maxHeight) {
+                        // Already small enough
+                        resolve(dataUrl);
+                    } else {
+                        // Needs compression
+                        this.compressImageFromDataUrl(dataUrl, maxWidth, maxHeight, quality)
+                            .then(resolve).catch(reject);
+                    }
+                };
+                img.onerror = () => {
+                    // If we can't check, try to compress anyway
+                    this.compressImageFromDataUrl(dataUrl, maxWidth, maxHeight, quality)
+                        .then(resolve).catch(reject);
+                };
+                img.src = dataUrl;
+            } else {
+                // Not JPEG or large, compress it
+                this.compressImageFromDataUrl(dataUrl, maxWidth, maxHeight, quality)
+                    .then(resolve).catch(reject);
+            }
+        });
+    }
+    
+    // Helper to compress from data URL
+    compressImageFromDataUrl(dataUrl, maxWidth, maxHeight, quality) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                let width = img.width;
+                let height = img.height;
+                
+                // Calculate new dimensions
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = (height * maxWidth) / width;
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = (width * maxHeight) / height;
+                        height = maxHeight;
+                    }
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                // Convert to compressed data URL
+                const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+                resolve(compressedDataUrl);
+            };
+            img.onerror = reject;
+            img.src = dataUrl;
+        });
+    }
+    
+    // Compress all images in a location's stands before sharing
+    async compressLocationImages(location) {
+        const compressedLocation = JSON.parse(JSON.stringify(location)); // Deep copy
+        
+        if (!compressedLocation.stands || compressedLocation.stands.length === 0) {
+            return compressedLocation;
+        }
+        
+        // Compress images in all stands
+        for (let stand of compressedLocation.stands) {
+            if (stand.images && stand.images.length > 0) {
+                const compressedImages = [];
+                for (let imageDataUrl of stand.images) {
+                    try {
+                        const compressed = await this.compressBase64Image(imageDataUrl, 800, 800, 0.7);
+                        compressedImages.push(compressed);
+                    } catch (error) {
+                        console.warn('Failed to compress image, using original:', error);
+                        // Use original if compression fails
+                        compressedImages.push(imageDataUrl);
+                    }
+                }
+                stand.images = compressedImages;
+            }
+        }
+        
+        return compressedLocation;
     }
     
     addImageToGallery(imageSrc, standId = null, imageIndex = null) {

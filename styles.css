@@ -688,6 +688,8 @@ body {
     font-size: 14px;
     color: var(--text-secondary);
     text-transform: capitalize;
+    display: flex;
+    align-items: center;
 }
 
 .moon-best-times {
