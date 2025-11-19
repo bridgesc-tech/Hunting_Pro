@@ -17,12 +17,20 @@ class ColorDetector {
         this.lastVibrationTime = 0; // Track last vibration time for cooldown
         this.vibrationCooldown = 500; // Minimum time between vibrations (ms)
         this.userInteractionOccurred = false; // Track if user has interacted (required for vibration on mobile)
+        this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        this.vibrationSupported = false; // Will be set after testing
+        this.circleAngle = 0; // Angle for orbiting circle animation
+        this.smallDetectionCenter = null; // Center point of small detection
+        this.smallDetectionRadius = 0; // Radius for orbiting circle
+        this.detectionHistoryForCircle = []; // Store recent detection centers for stability
+        this.stableDetectionFrames = 0; // Count consecutive frames with small detection
+        this.minStableFrames = 2; // Require 2 consecutive frames before showing circle (reduced for responsiveness)
         
         // Color detection settings - optimized for blood detection
         this.targetColor = { r: 255, g: 0, b: 0 }; // Default red
         this.hueTolerance = 10; // Default tolerance
-        this.saturationMin = 0.0; // Default to 0%
-        this.brightnessMin = 0.0; // Default to 0%
+        this.saturationMin = 0.01; // Default to 1%
+        this.brightnessMin = 0.25; // Default to 25%
         this.brightnessMax = 1.0; // Allow all brightness levels
         
         // Temporal smoothing for more consistent detection
@@ -47,13 +55,7 @@ class ColorDetector {
         const markUserInteraction = () => {
             this.userInteractionOccurred = true;
             // Test vibration immediately to ensure it's enabled
-            if ('vibrate' in navigator) {
-                try {
-                    navigator.vibrate(10); // Very short test vibration
-                } catch (e) {
-                    console.log('Vibration test failed:', e);
-                }
-            }
+            this.testVibrationSupport();
         };
         
         document.getElementById('startBtn').addEventListener('click', () => {
@@ -353,6 +355,33 @@ class ColorDetector {
         }
     }
     
+    testVibrationSupport() {
+        // Test if vibration actually works on this device
+        if ('vibrate' in navigator) {
+            try {
+                // Try a very short vibration to test support
+                const result = navigator.vibrate(10);
+                this.vibrationSupported = result !== false;
+                console.log(`Vibration API test: ${this.vibrationSupported ? 'SUPPORTED' : 'NOT SUPPORTED'}`, {
+                    isIOS: this.isIOS,
+                    hasVibrate: 'vibrate' in navigator,
+                    userAgent: navigator.userAgent
+                });
+                
+                // If on iOS and vibration returned false, it's likely not supported
+                if (this.isIOS && result === false) {
+                    console.warn('⚠️ iOS detected: Vibration API may not be fully supported. iOS 18+ may have limited support.');
+                }
+            } catch (e) {
+                this.vibrationSupported = false;
+                console.warn('Vibration test failed:', e);
+            }
+        } else {
+            this.vibrationSupported = false;
+            console.log('Vibration API not available in navigator');
+        }
+    }
+    
     vibrateOnDetection() {
         // Check cooldown to prevent rapid vibrations
         const now = Date.now();
@@ -367,21 +396,151 @@ class ColorDetector {
             return;
         }
         
+        // If we haven't tested yet, test now
+        if (this.vibrationSupported === false && 'vibrate' in navigator) {
+            this.testVibrationSupport();
+        }
+        
         // Use Vibration API to provide haptic feedback when red is detected
-        if ('vibrate' in navigator) {
+        if (this.vibrationSupported && 'vibrate' in navigator) {
             try {
                 // More aggressive vibration pattern for better mobile detection
                 // Pattern: medium vibration, short pause, medium vibration
                 const vibrationPattern = [200, 100, 200];
-                navigator.vibrate(vibrationPattern);
-                this.lastVibrationTime = now;
-                console.log('Vibration triggered on red detection');
+                const result = navigator.vibrate(vibrationPattern);
+                
+                if (result === false) {
+                    // Vibration was blocked/not supported
+                    console.warn('Vibration was blocked or not supported');
+                    this.vibrationSupported = false;
+                } else {
+                    this.lastVibrationTime = now;
+                    console.log('✅ Vibration triggered on red detection', {
+                        pattern: vibrationPattern,
+                        isIOS: this.isIOS
+                    });
+                }
             } catch (error) {
                 console.error('Vibration failed:', error);
+                this.vibrationSupported = false;
             }
         } else {
-            console.log('Vibration API not supported in this browser');
+            if (this.isIOS) {
+                console.log('⚠️ iOS device detected - Vibration API has limited/no support on iOS. Visual indicator will still work.');
+            } else {
+                console.log('Vibration API not supported in this browser');
+            }
         }
+    }
+    
+    // Find connected components (blobs) in the mask
+    findConnectedComponents(mask, width, height) {
+        const visited = new Uint8Array(width * height);
+        const components = [];
+        const minDetectionPixels = 400; // Minimum pixels for a valid blob (increased significantly for much stricter detection)
+        const maxSmallDetectionPercentage = 1.5; // Max 1.5% of screen (reduced further for stricter detection)
+        const totalPixels = width * height;
+        
+        // Flood fill to find connected components
+        const floodFill = (startX, startY, componentId) => {
+            const stack = [[startX, startY]];
+            const pixels = [];
+            let minX = startX, minY = startY, maxX = startX, maxY = startY;
+            let sumX = 0, sumY = 0;
+            
+            while (stack.length > 0) {
+                const [x, y] = stack.pop();
+                const idx = y * width + x;
+                
+                // Check bounds and if already visited or not part of mask
+                if (x < 0 || x >= width || y < 0 || y >= height || 
+                    visited[idx] || mask[idx] !== 1) {
+                    continue;
+                }
+                
+                visited[idx] = 1;
+                pixels.push([x, y]);
+                sumX += x;
+                sumY += y;
+                
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+                
+                // Check 8-connected neighbors
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        stack.push([x + dx, y + dy]);
+                    }
+                }
+            }
+            
+            if (pixels.length >= minDetectionPixels) {
+                const detectionPercentage = (pixels.length / totalPixels) * 100;
+                if (detectionPercentage <= maxSmallDetectionPercentage) {
+                    const centerX = sumX / pixels.length;
+                    const centerY = sumY / pixels.length;
+                    const detectionWidth = maxX - minX;
+                    const detectionHeight = maxY - minY;
+                    const detectionRadius = Math.max(detectionWidth, detectionHeight) / 2;
+                    const circleRadius = detectionRadius + 15; // Add padding
+                    
+                    components.push({
+                        centerX,
+                        centerY,
+                        radius: circleRadius,
+                        pixelCount: pixels.length,
+                        pixels: pixels
+                    });
+                }
+            }
+        };
+        
+        // Find all connected components
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                if (mask[idx] === 1 && !visited[idx]) {
+                    floodFill(x, y, components.length);
+                }
+            }
+        }
+        
+        return components;
+    }
+    
+    drawOrbitingCircle(mask, width, height) {
+        if (!mask || mask.length === 0) {
+            this.smallDetectionCenter = null;
+            this.detectionHistoryForCircle = [];
+            this.stableDetectionFrames = 0;
+            return;
+        }
+        
+        // Find all individual connected components (blobs)
+        const components = this.findConnectedComponents(mask, width, height);
+        
+        if (components.length === 0) {
+            return;
+        }
+        
+        // Draw a circle around each detected blob
+        this.ctx.save();
+        this.ctx.strokeStyle = '#32FF32'; // Lime green
+        this.ctx.lineWidth = 3;
+        
+        for (const component of components) {
+            const { centerX, centerY, radius } = component;
+            
+            // Draw circle outline around the detection
+            this.ctx.beginPath();
+            this.ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+        
+        this.ctx.restore();
     }
     
     detectColors() {
@@ -451,18 +610,9 @@ class ColorDetector {
                 const satMatch = hsv.s >= this.saturationMin;
                 const brightMatch = hsv.v >= this.brightnessMin && hsv.v <= this.brightnessMax;
                 
-                // When hue tolerance is very low (0-5), require higher saturation for better accuracy
-                // This prevents matching skin tones and other near-red colors
-                let strictSatMatch = satMatch;
-                if (this.hueTolerance <= 5) {
-                    // Require at least 30% saturation when tolerance is very low
-                    strictSatMatch = hsv.s >= Math.max(this.saturationMin, 0.3);
-                }
-                
-                // Only use dark blood special case if tolerance allows it
-                const isDarkBlood = this.hueTolerance > 5 && hsv.v < 0.3 && minDiff <= 40 && hsv.s >= 0.15;
-                
-                isMatch = (hueMatch && strictSatMatch && brightMatch) || isDarkBlood;
+                // Simple, consistent matching - no special cases
+                // Just use the slider values directly
+                isMatch = hueMatch && satMatch && brightMatch;
             } else {
                 isMatch = hueDiff <= this.hueTolerance &&
                          hsv.s >= this.saturationMin &&
@@ -548,6 +698,11 @@ class ColorDetector {
         } else {
             this.indicator.classList.add('hidden');
         }
+        
+        // Draw orbiting green circle for small detections
+        // Try using smoothedMask directly first (before temporal averaging) for more responsive detection
+        // If that doesn't work well, we can switch back to finalMask
+        this.drawOrbitingCircle(smoothedMask, width, height);
         
         // Calculate FPS
         this.frameCount++;
