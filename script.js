@@ -1008,9 +1008,9 @@ class WeatherService {
         const todaySunset = daily.sunset && daily.sunset[0] ? daily.sunset[0] : null;
         
         // Process forecast days with hourly wind direction data
-        // Get 7 days to ensure we have 5 after filtering out today
+        // Get 6 days: today + next 5 days
         const forecast = {
-            list: daily.time.slice(0, 7).map((time, index) => {
+            list: daily.time.slice(0, 6).map((time, index) => {
                 const dayDate = new Date(time);
                 dayDate.setHours(0, 0, 0, 0);
                 const nextDay = new Date(dayDate);
@@ -1245,25 +1245,21 @@ class WeatherService {
         if (forecast && forecast.list && forecast.list.length > 0) {
             html += `
                 <div class="weather-forecast">
-                    <h3>5-Day Forecast</h3>
+                    <h3>6-Day Forecast</h3>
                     <div class="forecast-items">
             `;
             
             const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
             
-            // Skip today and show next 5 days
-            const forecastDays = forecast.list.filter((item) => {
-                const itemDate = new Date(item.dt_txt);
-                itemDate.setHours(0, 0, 0, 0);
-                const todayDate = new Date(today);
-                todayDate.setHours(0, 0, 0, 0);
-                return itemDate.getTime() > todayDate.getTime();
-            }).slice(0, 5);
+            // Show today + next 5 days (6 days total)
+            // Use all 6 days from the forecast list (already filtered to first 6 days)
+            const forecastDays = forecast.list.slice(0, 6);
             
             forecastDays.forEach((item) => {
-                const date = new Date(item.dt_txt || item.dt * 1000);
+                // Parse date string in a timezone-safe way
+                const dateStr = item.dt_txt;
+                // Handle ISO date strings (YYYY-MM-DD format from Open-Meteo)
+                const date = new Date(dateStr + 'T00:00:00');
                 const dayName = days[date.getDay()];
                 
                 html += `
@@ -1560,15 +1556,16 @@ class MoonService {
         `;
         
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
         
-        // Process today and next 4 days
-        for (let i = 0; i < Math.min(7, daily.time.length); i++) {
-            const dayDate = new Date(daily.time[i]);
+        // Process today and next 5 days (6 days total)
+        // Use first 6 days from the API response
+        const daysToShow = Math.min(6, daily.time.length);
+        for (let i = 0; i < daysToShow; i++) {
+            // Parse date string in a timezone-safe way
+            const dateStr = daily.time[i];
+            // Handle ISO date strings (YYYY-MM-DD format from Open-Meteo)
+            const dayDate = new Date(dateStr + 'T00:00:00');
             dayDate.setHours(0, 0, 0, 0);
-            
-            if (dayDate < today) continue; // Skip past days only
             
             const dayName = days[dayDate.getDay()];
             const moonPhase = this.calculateMoonPhase(dayDate);
