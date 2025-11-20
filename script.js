@@ -1956,61 +1956,95 @@ class MoonService {
             dayEnd.setDate(dayEnd.getDate() + 1);
             
             // Define time ranges: [startHour, endHour, label]
+            // Only show the 5 main time ranges that are displayed
             const timeRanges = [
                 [6, 8, '6am-8am'],
                 [8, 10, '8am-10am'],
-                [10, 12, '10am-12pm'],
                 [12, 14, '12pm-2pm'],
                 [14, 16, '2pm-4pm'],
-                [16, 18, '4pm-6pm'],
                 [18, 20, '6pm-8pm']
             ];
             
             const dayTimeRanges = [];
             
+            // Get all hourly data for this day to calculate averages
+            const dayHourlyData = [];
             if (hourly && hourly.time) {
-                timeRanges.forEach(([startHour, endHour, label]) => {
-                    const rangeScores = [];
-                    const rangeTemps = [];
-                    const rangeWinds = [];
-                    
-                    for (let j = 0; j < hourly.time.length; j++) {
-                        const hourTime = new Date(hourly.time[j]);
-                        if (hourTime >= dayStart && hourTime < dayEnd) {
-                            const hour = hourTime.getHours();
-                            // Include hours in this range (startHour inclusive, endHour exclusive)
-                            if (hour >= startHour && hour < endHour) {
-                                const score = this.calculateDeerActivityScore(
-                                    hourly.temperature_2m[j],
-                                    hourly.wind_speed_10m[j],
-                                    moonPhase,
-                                    hour,
-                                    sunrise,
-                                    sunset
-                                );
-                                rangeScores.push(score);
-                                rangeTemps.push(hourly.temperature_2m[j]);
-                                rangeWinds.push(hourly.wind_speed_10m[j]);
-                            }
-                        }
-                    }
-                    
-                    // Calculate average for this time range
-                    if (rangeScores.length > 0) {
-                        const avgScore = rangeScores.reduce((a, b) => a + b, 0) / rangeScores.length;
-                        const avgTemp = rangeTemps.reduce((a, b) => a + b, 0) / rangeTemps.length;
-                        const avgWind = rangeWinds.reduce((a, b) => a + b, 0) / rangeWinds.length;
-                        
-                        dayTimeRanges.push({
-                            label: label,
-                            startHour: startHour,
-                            score: avgScore,
-                            temp: avgTemp,
-                            wind: avgWind
+                for (let j = 0; j < hourly.time.length; j++) {
+                    const hourTime = new Date(hourly.time[j]);
+                    if (hourTime >= dayStart && hourTime < dayEnd) {
+                        dayHourlyData.push({
+                            hour: hourTime.getHours(),
+                            temp: hourly.temperature_2m[j],
+                            wind: hourly.wind_speed_10m[j],
+                            time: hourTime
                         });
                     }
-                });
+                }
             }
+            
+            // Calculate average wind for the day (for use when hourly data is missing)
+            const avgDayWind = dayHourlyData.length > 0 
+                ? dayHourlyData.reduce((sum, d) => sum + d.wind, 0) / dayHourlyData.length 
+                : 5; // Default to 5 mph if no data
+            
+            timeRanges.forEach(([startHour, endHour, label]) => {
+                const rangeScores = [];
+                const rangeTemps = [];
+                const rangeWinds = [];
+                
+                // Find hourly data for this time range
+                dayHourlyData.forEach(data => {
+                    if (data.hour >= startHour && data.hour < endHour) {
+                        const score = this.calculateDeerActivityScore(
+                            data.temp,
+                            data.wind,
+                            moonPhase,
+                            data.hour,
+                            sunrise,
+                            sunset
+                        );
+                        rangeScores.push(score);
+                        rangeTemps.push(data.temp);
+                        rangeWinds.push(data.wind);
+                    }
+                });
+                
+                // If no hourly data for this range, use daily average with midpoint hour
+                if (rangeScores.length === 0) {
+                    const midpointHour = Math.floor((startHour + endHour) / 2);
+                    const estimatedTemp = avgTemp; // Use daily average temp
+                    const estimatedScore = this.calculateDeerActivityScore(
+                        estimatedTemp,
+                        avgDayWind,
+                        moonPhase,
+                        midpointHour,
+                        sunrise,
+                        sunset
+                    );
+                    
+                    dayTimeRanges.push({
+                        label: label,
+                        startHour: startHour,
+                        score: estimatedScore,
+                        temp: estimatedTemp,
+                        wind: avgDayWind
+                    });
+                } else {
+                    // Calculate average for this time range
+                    const avgScore = rangeScores.reduce((a, b) => a + b, 0) / rangeScores.length;
+                    const avgTemp = rangeTemps.reduce((a, b) => a + b, 0) / rangeTemps.length;
+                    const avgWind = rangeWinds.reduce((a, b) => a + b, 0) / rangeWinds.length;
+                    
+                    dayTimeRanges.push({
+                        label: label,
+                        startHour: startHour,
+                        score: avgScore,
+                        temp: avgTemp,
+                        wind: avgWind
+                    });
+                }
+            });
             
             // Sort by start hour to maintain order
             dayTimeRanges.sort((a, b) => a.startHour - b.startHour);
