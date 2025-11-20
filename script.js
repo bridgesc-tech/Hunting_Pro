@@ -437,8 +437,8 @@ class ColorDetector {
     findConnectedComponents(mask, width, height) {
         const visited = new Uint8Array(width * height);
         const components = [];
-        const minDetectionPixels = 400; // Minimum pixels for a valid blob (increased significantly for much stricter detection)
-        const maxSmallDetectionPercentage = 1.5; // Max 1.5% of screen (reduced further for stricter detection)
+        const minDetectionPixels = 200; // Minimum pixels for a valid blob (lowered for better small detection on mobile)
+        const maxSmallDetectionPercentage = 2.5; // Max 2.5% of screen (increased to catch smaller detections)
         const totalPixels = width * height;
         
         // Flood fill to find connected components
@@ -919,7 +919,7 @@ class WeatherService {
         // Use free Open-Meteo API (no API key required)
         // Use timezone=auto to automatically use the location's timezone
         const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,surface_pressure&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,surface_pressure_max,surface_pressure_min&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,surface_pressure&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure,precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,surface_pressure_max,surface_pressure_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`
         );
         const data = await response.json();
         
@@ -990,6 +990,7 @@ class WeatherService {
                         wind_speed: Math.round(hourly.wind_speed_10m[i]),
                         wind_direction: hourly.wind_direction_10m[i],
                         pressure: hourly.surface_pressure ? Math.round(hourly.surface_pressure[i]) : null,
+                        precipitation_probability: hourly.precipitation_probability && hourly.precipitation_probability[i] !== undefined ? Math.round(hourly.precipitation_probability[i]) : null,
                         hour: hour // Store hour for sorting
                     });
                 }
@@ -1010,7 +1011,8 @@ class WeatherService {
                         weather_code: item.weather_code,
                         wind_speed: item.wind_speed,
                         wind_direction: item.wind_direction,
-                        pressure: item.pressure
+                        pressure: item.pressure,
+                        precipitation_probability: item.precipitation_probability
                     });
                 }
             }
@@ -1045,6 +1047,7 @@ class WeatherService {
                 const dayTemps = [];
                 const dayPressures = [];
                 const dayWindDirections = [];
+                const dayPrecipProb = [];
                 
                 if (hourly && hourly.time) {
                     for (let i = 0; i < hourly.time.length; i++) {
@@ -1062,9 +1065,20 @@ class WeatherService {
                                 if (hourly.wind_direction_10m && hourly.wind_direction_10m[i] !== undefined) {
                                     dayWindDirections.push(hourly.wind_direction_10m[i]);
                                 }
+                                if (hourly.precipitation_probability && hourly.precipitation_probability[i] !== undefined) {
+                                    dayPrecipProb.push(hourly.precipitation_probability[i]);
+                                }
                             }
                         }
                     }
+                }
+                
+                // Get max precipitation probability for the day (from daily data if available, otherwise from hourly)
+                let maxPrecipProb = null;
+                if (daily.precipitation_probability_max && daily.precipitation_probability_max[index] !== undefined) {
+                    maxPrecipProb = Math.round(daily.precipitation_probability_max[index]);
+                } else if (dayPrecipProb.length > 0) {
+                    maxPrecipProb = Math.round(Math.max(...dayPrecipProb));
                 }
                 
                 // Calculate temperature range (6am-6pm)
@@ -1133,7 +1147,8 @@ class WeatherService {
                     weather: [{ description: weatherCodes[daily.weather_code[index]] || 'Unknown' }],
                     sunrise: daily.sunrise && daily.sunrise[index] ? daily.sunrise[index] : null,
                     sunset: daily.sunset && daily.sunset[index] ? daily.sunset[index] : null,
-                    wind_direction: windDisplay
+                    wind_direction: windDisplay,
+                    precipitation_probability: maxPrecipProb
                 };
             })
         };
@@ -1252,6 +1267,7 @@ class WeatherService {
                         <div class="hourly-desc">${weatherCodes[hour.weather_code] || 'Unknown'}</div>
                         <div class="hourly-wind">${hourWindDir} ${hour.wind_speed} mph</div>
                         ${hour.pressure ? `<div class="hourly-pressure">Pressure: ${getPressureLabel(hour.pressure)}</div>` : ''}
+                        ${hour.precipitation_probability !== null ? `<div class="hourly-precip">Precipitation: ${hour.precipitation_probability}%</div>` : ''}
                     </div>
                 `;
             });
@@ -1265,15 +1281,21 @@ class WeatherService {
         if (forecast && forecast.list && forecast.list.length > 0) {
             html += `
                 <div class="weather-forecast">
-                    <h3>6-Day Forecast</h3>
+                    <h3>5-Day Forecast</h3>
                     <div class="forecast-items">
             `;
             
             const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
             
-            // Show today + next 5 days (6 days total)
-            // Use all 6 days from the forecast list (already filtered to first 6 days)
-            const forecastDays = forecast.list.slice(0, 6);
+            // Filter out today and show only next 5 days
+            const forecastDays = forecast.list.filter((item) => {
+                const dateStr = item.dt_txt;
+                const itemDate = new Date(dateStr + 'T00:00:00');
+                itemDate.setHours(0, 0, 0, 0);
+                return itemDate.getTime() > today.getTime();
+            }).slice(0, 5);
             
             forecastDays.forEach((item) => {
                 // Parse date string in a timezone-safe way
@@ -1289,6 +1311,7 @@ class WeatherService {
                         <div class="forecast-desc">${item.weather[0].description}</div>
                         <div class="forecast-wind">Wind: ${item.wind_direction || 'N/A'}</div>
                         ${item.main.pressure ? `<div class="forecast-pressure">Pressure: ${item.main.pressure}</div>` : ''}
+                        ${item.precipitation_probability !== null ? `<div class="forecast-precip">Precipitation: ${item.precipitation_probability}%</div>` : ''}
                     </div>
                 `;
             });
@@ -1576,16 +1599,25 @@ class MoonService {
         `;
         
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
         
-        // Process today and next 5 days (6 days total)
-        // Use first 6 days from the API response
-        const daysToShow = Math.min(6, daily.time.length);
-        for (let i = 0; i < daysToShow; i++) {
+        // Process next 5 days (excluding today)
+        let daysShown = 0;
+        const maxDays = Math.min(7, daily.time.length); // Check up to 7 days to find 5 future days
+        for (let i = 0; i < maxDays && daysShown < 5; i++) {
             // Parse date string in a timezone-safe way
             const dateStr = daily.time[i];
             // Handle ISO date strings (YYYY-MM-DD format from Open-Meteo)
             const dayDate = new Date(dateStr + 'T00:00:00');
             dayDate.setHours(0, 0, 0, 0);
+            
+            // Skip today - only show future days
+            if (dayDate.getTime() <= today.getTime()) {
+                continue;
+            }
+            
+            daysShown++;
             
             const dayName = days[dayDate.getDay()];
             const moonPhase = this.calculateMoonPhase(dayDate);
