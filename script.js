@@ -527,12 +527,26 @@ class ColorDetector {
         }
         
         // Draw a circle around each detected blob
+        // Ensure canvas context is properly set up for mobile
         this.ctx.save();
         this.ctx.strokeStyle = '#32FF32'; // Lime green
         this.ctx.lineWidth = 3;
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
+        
+        // Force canvas to be ready for drawing on mobile
+        if (!this.ctx || this.canvas.width === 0 || this.canvas.height === 0) {
+            this.ctx.restore();
+            return;
+        }
         
         for (const component of components) {
             const { centerX, centerY, radius } = component;
+            
+            // Validate coordinates
+            if (isNaN(centerX) || isNaN(centerY) || isNaN(radius) || radius <= 0) {
+                continue;
+            }
             
             // Draw circle outline around the detection
             this.ctx.beginPath();
@@ -541,6 +555,12 @@ class ColorDetector {
         }
         
         this.ctx.restore();
+        
+        // Force canvas to flush on mobile devices
+        // Some mobile browsers need explicit flushing
+        if (this.ctx.commit) {
+            this.ctx.commit();
+        }
     }
     
     detectColors() {
@@ -640,10 +660,6 @@ class ColorDetector {
             totalSampled++;
         }
         
-        // Put modified image data back to canvas FIRST (before smoothing)
-        // This ensures the grayscale and color highlighting is visible
-        this.ctx.putImageData(imageData, 0, 0);
-        
         // Apply morphological operations to reduce noise (dilation then erosion)
         const smoothedMask = this.smoothMask(mask, width, height);
         
@@ -699,9 +715,13 @@ class ColorDetector {
             this.indicator.classList.add('hidden');
         }
         
-        // Draw orbiting green circle for small detections
-        // Try using smoothedMask directly first (before temporal averaging) for more responsive detection
-        // If that doesn't work well, we can switch back to finalMask
+        // Put modified image data back to canvas AFTER processing masks
+        // This ensures the grayscale and color highlighting is visible
+        this.ctx.putImageData(imageData, 0, 0);
+        
+        // Draw orbiting green circle for small detections AFTER putImageData
+        // This ensures circles are drawn on top and visible on mobile
+        // Use smoothedMask for more responsive detection (shows circles immediately)
         this.drawOrbitingCircle(smoothedMask, width, height);
         
         // Calculate FPS
