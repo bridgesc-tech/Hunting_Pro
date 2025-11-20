@@ -623,6 +623,14 @@ body {
     margin-top: 4px;
 }
 
+.forecast-precip {
+    font-size: 11px;
+    color: var(--text-secondary);
+    opacity: 0.9;
+    font-weight: 600;
+    margin-top: 4px;
+}
+
 .weather-error {
     text-align: center;
     color: var(--primary-color);
@@ -1788,6 +1796,12 @@ input[type="file"].hidden,
 }
 
 .hourly-pressure {
+    font-size: 10px;
+    color: var(--text-secondary);
+    opacity: 0.8;
+}
+
+.hourly-precip {
     font-size: 10px;
     color: var(--text-secondary);
     opacity: 0.8;

@@ -916,15 +916,226 @@ class WeatherService {
     }
     
     async fetchWeatherData(lat, lon) {
-        // Use free Open-Meteo API (no API key required)
-        // Use timezone=auto to automatically use the location's timezone
-        const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code,surface_pressure&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure,precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,surface_pressure_max,surface_pressure_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`
-        );
-        const data = await response.json();
+        // Check if API key is configured
+        console.log('WeatherService checking API key:', window.WEATHER_API_KEY ? 'Present' : 'Missing');
+        if (!window.WEATHER_API_KEY || window.WEATHER_API_KEY === 'YOUR_API_KEY_HERE' || (window.WEATHER_API_KEY && window.WEATHER_API_KEY.trim() === '')) {
+            throw new Error('OpenWeatherMap API key not configured. Please add your API key to weather-config.js and refresh the page (hard refresh: Ctrl+F5 or Cmd+Shift+R).');
+        }
         
-        // Transform Open-Meteo data to match our display format
-        return this.transformOpenMeteoData(data);
+        // Fetch current weather and 5-day forecast from OpenWeatherMap
+        const [currentResponse, forecastResponse] = await Promise.all([
+            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`),
+            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`)
+        ]);
+        
+        if (!currentResponse.ok || !forecastResponse.ok) {
+            const errorData = await currentResponse.json().catch(() => ({ message: 'API request failed' }));
+            if (currentResponse.status === 401 || forecastResponse.status === 401) {
+                throw new Error('Invalid API key. Please verify your OpenWeatherMap API key is correct and activated. New keys may take up to 2 hours to activate. Check your key at https://home.openweathermap.org/api_keys');
+            }
+            throw new Error(errorData.message || `Failed to fetch weather data (Status: ${currentResponse.status})`);
+        }
+        
+        const currentData = await currentResponse.json();
+        const forecastData = await forecastResponse.json();
+        
+        // Transform OpenWeatherMap data to match our display format
+        return this.transformOpenWeatherMapData(currentData, forecastData);
+    }
+    
+    transformOpenWeatherMapData(currentData, forecastData) {
+        console.log('Transforming OpenWeatherMap data...');
+        // Transform OpenWeatherMap format to match our display format
+        const current = {
+            main: {
+                temp: Math.round(currentData.main.temp),
+                humidity: Math.round(currentData.main.humidity),
+                pressure: Math.round(currentData.main.pressure * 0.02953) // Convert hPa to inHg (approximate)
+            },
+            weather: currentData.weather || [{ description: 'Unknown' }],
+            wind: {
+                speed: Math.round(currentData.wind.speed),
+                deg: currentData.wind.deg || 0
+            },
+            sys: {
+                sunrise: currentData.sys.sunrise * 1000, // Convert to milliseconds
+                sunset: currentData.sys.sunset * 1000
+            }
+        };
+        
+        // Process forecast list (3-hour intervals for 5 days)
+        const forecastList = forecastData.list || [];
+        const now = new Date();
+        const targetHours = [6, 9, 12, 15, 18];
+        
+        // Group forecast by day and extract hourly data
+        const dailyForecasts = {};
+        const allHourlyData = [];
+        
+        forecastList.forEach(item => {
+            const itemDate = new Date(item.dt * 1000);
+            const dayKey = itemDate.toISOString().split('T')[0];
+            const hour = itemDate.getHours();
+            
+            // Collect hourly data for today's forecast (6am, 9am, 12pm, 3pm, 6pm)
+            if (itemDate >= now && targetHours.includes(hour)) {
+                allHourlyData.push({
+                    time: itemDate.toISOString(),
+                    temp: Math.round(item.main.temp),
+                    weather_code: item.weather[0].id,
+                    wind_speed: Math.round(item.wind.speed),
+                    wind_direction: item.wind.deg || 0,
+                    pressure: Math.round(item.main.pressure * 0.02953),
+                    precipitation_probability: item.pop !== undefined ? Math.round(item.pop * 100) : null,
+                    hour: hour
+                });
+            }
+            
+            // Group by day for daily forecast
+            if (!dailyForecasts[dayKey]) {
+                dailyForecasts[dayKey] = {
+                    date: dayKey,
+                    temps: [],
+                    pressures: [],
+                    windDirections: [],
+                    precipProbs: [],
+                    weatherCodes: [],
+                    sunrise: null,
+                    sunset: null
+                };
+            }
+            
+            dailyForecasts[dayKey].temps.push(item.main.temp);
+            dailyForecasts[dayKey].pressures.push(item.main.pressure * 0.02953);
+            dailyForecasts[dayKey].windDirections.push(item.wind.deg || 0);
+            if (item.pop !== undefined) {
+                dailyForecasts[dayKey].precipProbs.push(item.pop * 100);
+            }
+            dailyForecasts[dayKey].weatherCodes.push(item.weather[0].id);
+        });
+        
+        // Sort hourly data by time and take first 5 unique hours
+        allHourlyData.sort((a, b) => new Date(a.time) - new Date(b.time));
+        const seenHours = new Set();
+        const uniqueHourlyData = [];
+        for (const item of allHourlyData) {
+            if (!seenHours.has(item.hour) && uniqueHourlyData.length < 5) {
+                seenHours.add(item.hour);
+                uniqueHourlyData.push({
+                    time: item.time,
+                    temp: item.temp,
+                    weather_code: item.weather_code,
+                    wind_speed: item.wind_speed,
+                    wind_direction: item.wind_direction,
+                    pressure: item.pressure,
+                    precipitation_probability: item.precipitation_probability
+                });
+            }
+        }
+        
+        // Sort by hour to ensure correct order (6am, 9am, 12pm, 3pm, 6pm)
+        uniqueHourlyData.sort((a, b) => {
+            const hourA = new Date(a.time).getHours();
+            const hourB = new Date(b.time).getHours();
+            return hourA - hourB;
+        });
+        
+        // Create daily forecast list (next 5 days, excluding today)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const forecastDays = Object.keys(dailyForecasts)
+            .sort()
+            .filter(dayKey => {
+                const dayDate = new Date(dayKey + 'T00:00:00');
+                return dayDate.getTime() > today.getTime();
+            })
+            .slice(0, 5)
+            .map(dayKey => {
+                const day = dailyForecasts[dayKey];
+                const dayDate = new Date(dayKey + 'T00:00:00');
+                
+                // Calculate temperature range
+                const minTemp = Math.round(Math.min(...day.temps));
+                const maxTemp = Math.round(Math.max(...day.temps));
+                const tempRange = minTemp === maxTemp ? `${maxTemp}°F` : `${minTemp}-${maxTemp}°F`;
+                
+                // Calculate pressure range
+                const pressures = day.pressures.map(p => {
+                    const pInHg = Math.round(p);
+                    if (pInHg > 30.2) return 'High';
+                    if (pInHg < 29.7) return 'Low';
+                    return 'Mid';
+                });
+                const uniquePressures = pressures.filter((p, i) => i === 0 || p !== pressures[i - 1]);
+                const pressureRange = uniquePressures.length === 1 ? uniquePressures[0] : uniquePressures.join('-');
+                
+                // Calculate wind direction
+                const windDirs = day.windDirections.map(d => this.getWindDirection(d));
+                const startDir = windDirs[0];
+                const allSame = windDirs.every(d => d === startDir);
+                const windDisplay = allSame ? startDir : `${startDir}--${windDirs[windDirs.length - 1]}`;
+                
+                // Get max precipitation probability
+                const maxPrecipProb = day.precipProbs.length > 0 ? Math.round(Math.max(...day.precipProbs)) : null;
+                
+                // Get most common weather code for the day
+                const weatherCodeCounts = {};
+                day.weatherCodes.forEach(code => {
+                    weatherCodeCounts[code] = (weatherCodeCounts[code] || 0) + 1;
+                });
+                const mostCommonCode = Object.keys(weatherCodeCounts).reduce((a, b) => 
+                    weatherCodeCounts[a] > weatherCodeCounts[b] ? a : b
+                );
+                
+                return {
+                    dt_txt: dayKey,
+                    main: {
+                        temp: tempRange,
+                        temp_min: minTemp,
+                        temp_max: maxTemp,
+                        pressure: pressureRange
+                    },
+                    weather: [{ 
+                        description: this.getWeatherDescription(parseInt(mostCommonCode)),
+                        id: parseInt(mostCommonCode)
+                    }],
+                    sunrise: null, // OpenWeatherMap forecast doesn't include daily sunrise/sunset
+                    sunset: null,
+                    wind_direction: windDisplay,
+                    precipitation_probability: maxPrecipProb
+                };
+            });
+        
+        return {
+            current: {
+                main: current.main,
+                weather: current.weather,
+                wind: current.wind
+            },
+            forecast: {
+                list: forecastDays
+            },
+            hourly: uniqueHourlyData,
+            sunrise: new Date(current.sys.sunrise).toISOString(),
+            sunset: new Date(current.sys.sunset).toISOString(),
+            weatherCodes: {} // Not needed for OpenWeatherMap
+        };
+    }
+    
+    getWeatherDescription(weatherId) {
+        // Map OpenWeatherMap weather IDs to descriptions
+        if (weatherId >= 200 && weatherId < 300) return 'Thunderstorm';
+        if (weatherId >= 300 && weatherId < 400) return 'Drizzle';
+        if (weatherId >= 500 && weatherId < 600) return 'Rain';
+        if (weatherId >= 600 && weatherId < 700) return 'Snow';
+        if (weatherId >= 700 && weatherId < 800) return 'Mist';
+        if (weatherId === 800) return 'Clear sky';
+        if (weatherId === 801) return 'Few clouds';
+        if (weatherId === 802) return 'Scattered clouds';
+        if (weatherId === 803) return 'Broken clouds';
+        if (weatherId === 804) return 'Overcast clouds';
+        return 'Unknown';
     }
     
     transformOpenMeteoData(data) {
@@ -1259,12 +1470,21 @@ class WeatherService {
                 const hourDate = new Date(hour.time);
                 const hourLabel = hourDate.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
                 const hourWindDir = this.getWindDirection(hour.wind_direction);
+                // Get weather description - handle both OpenWeatherMap and Open-Meteo formats
+                let weatherDesc = 'Unknown';
+                if (hour.weather_code !== undefined) {
+                    if (weatherCodes[hour.weather_code]) {
+                        weatherDesc = weatherCodes[hour.weather_code];
+                    } else {
+                        weatherDesc = this.getWeatherDescription(hour.weather_code);
+                    }
+                }
                 
                 html += `
                     <div class="hourly-item">
                         <div class="hourly-time">${hourLabel}</div>
                         <div class="hourly-temp">${hour.temp}°F</div>
-                        <div class="hourly-desc">${weatherCodes[hour.weather_code] || 'Unknown'}</div>
+                        <div class="hourly-desc">${weatherDesc}</div>
                         <div class="hourly-wind">${hourWindDir} ${hour.wind_speed} mph</div>
                         ${hour.pressure ? `<div class="hourly-pressure">Pressure: ${getPressureLabel(hour.pressure)}</div>` : ''}
                         ${hour.precipitation_probability !== null ? `<div class="hourly-precip">Precipitation: ${hour.precipitation_probability}%</div>` : ''}
@@ -1421,12 +1641,115 @@ class MoonService {
     }
     
     async fetchWeatherData(lat, lon) {
-        // Use timezone=auto to automatically use the location's timezone
-        const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto`
-        );
-        const data = await response.json();
-        return data;
+        // Check if API key is configured
+        console.log('MoonService checking API key:', window.WEATHER_API_KEY ? 'Present' : 'Missing');
+        if (!window.WEATHER_API_KEY || window.WEATHER_API_KEY === 'YOUR_API_KEY_HERE' || window.WEATHER_API_KEY.trim() === '') {
+            throw new Error('OpenWeatherMap API key not configured. Please add your API key to weather-config.js and refresh the page (hard refresh: Ctrl+F5).');
+        }
+        
+        // Fetch current weather and 5-day forecast from OpenWeatherMap
+        const [currentResponse, forecastResponse] = await Promise.all([
+            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`),
+            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`)
+        ]);
+        
+        if (!currentResponse.ok || !forecastResponse.ok) {
+            const errorData = await currentResponse.json().catch(() => ({ message: 'API request failed' }));
+            if (currentResponse.status === 401 || forecastResponse.status === 401) {
+                throw new Error('Invalid API key. Please verify your OpenWeatherMap API key is correct and activated. New keys may take up to 2 hours to activate. Check your key at https://home.openweathermap.org/api_keys');
+            }
+            throw new Error(errorData.message || `Failed to fetch weather data (Status: ${currentResponse.status})`);
+        }
+        
+        const currentData = await currentResponse.json();
+        const forecastData = await forecastResponse.json();
+        
+        // Return data in format expected by displayMoonData
+        // Transform to match Open-Meteo format for compatibility
+        const daily = {
+            time: [],
+            temperature_2m_max: [],
+            temperature_2m_min: [],
+            weather_code: [],
+            sunrise: [],
+            sunset: []
+        };
+        
+        // Group forecast by day
+        const dailyData = {};
+        forecastData.list.forEach(item => {
+            const itemDate = new Date(item.dt * 1000);
+            const dayKey = itemDate.toISOString().split('T')[0];
+            
+            if (!dailyData[dayKey]) {
+                dailyData[dayKey] = {
+                    temps: [],
+                    weatherCodes: []
+                };
+            }
+            
+            dailyData[dayKey].temps.push(item.main.temp);
+            dailyData[dayKey].weatherCodes.push(item.weather[0].id);
+        });
+        
+        // Get base sunrise/sunset from current weather
+        const baseSunrise = new Date(currentData.sys.sunrise * 1000);
+        const baseSunset = new Date(currentData.sys.sunset * 1000);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Convert to daily format
+        Object.keys(dailyData).sort().forEach((dayKey, index) => {
+            const day = dailyData[dayKey];
+            const dayDate = new Date(dayKey + 'T00:00:00');
+            const daysFromToday = Math.round((dayDate - today) / (1000 * 60 * 60 * 24));
+            
+            daily.time.push(dayKey);
+            daily.temperature_2m_max.push(Math.max(...day.temps));
+            daily.temperature_2m_min.push(Math.min(...day.temps));
+            // Get most common weather code
+            const codeCounts = {};
+            day.weatherCodes.forEach(code => {
+                codeCounts[code] = (codeCounts[code] || 0) + 1;
+            });
+            const mostCommonCode = Object.keys(codeCounts).reduce((a, b) => 
+                codeCounts[a] > codeCounts[b] ? a : b
+            );
+            daily.weather_code.push(parseInt(mostCommonCode));
+            
+            // Approximate sunrise/sunset for each day (adjust by ~1 minute per day)
+            // In reality, this varies by location and season, but this is a reasonable approximation
+            const adjustedSunrise = new Date(baseSunrise);
+            adjustedSunrise.setDate(adjustedSunrise.getDate() + daysFromToday);
+            const adjustedSunset = new Date(baseSunset);
+            adjustedSunset.setDate(adjustedSunset.getDate() + daysFromToday);
+            
+            daily.sunrise.push(adjustedSunrise.toISOString());
+            daily.sunset.push(adjustedSunset.toISOString());
+        });
+        
+        // Process hourly data
+        const hourly = {
+            time: [],
+            temperature_2m: [],
+            weather_code: [],
+            wind_speed_10m: [],
+            wind_direction_10m: []
+        };
+        
+        forecastData.list.forEach(item => {
+            const itemDate = new Date(item.dt * 1000);
+            hourly.time.push(itemDate.toISOString());
+            hourly.temperature_2m.push(item.main.temp);
+            hourly.weather_code.push(item.weather[0].id);
+            hourly.wind_speed_10m.push(item.wind.speed);
+            hourly.wind_direction_10m.push(item.wind.deg || 0);
+        });
+        
+        return {
+            daily: daily,
+            hourly: hourly
+        };
     }
     
     calculateMoonPhase(date) {
