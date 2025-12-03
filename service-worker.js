@@ -1,5 +1,5 @@
 // Update this version number when you deploy a new version
-const APP_VERSION = '1.0.15';
+const APP_VERSION = '1.0.16';
 const CACHE_NAME = `hunting-pro-${APP_VERSION}`;
 const urlsToCache = [
     './',

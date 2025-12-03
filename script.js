@@ -1140,6 +1140,28 @@ class WeatherService {
         return 'Unknown';
     }
     
+    formatDateWithMonth(date) {
+        // Format date as "Thursday December 4th"
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        
+        const dayName = days[date.getDay()];
+        const monthName = months[date.getMonth()];
+        const day = date.getDate();
+        
+        // Add ordinal suffix
+        let suffix = 'th';
+        if (day === 1 || day === 21 || day === 31) {
+            suffix = 'st';
+        } else if (day === 2 || day === 22) {
+            suffix = 'nd';
+        } else if (day === 3 || day === 23) {
+            suffix = 'rd';
+        }
+        
+        return `${dayName} ${monthName} ${day}${suffix}`;
+    }
+    
     transformOpenMeteoData(data) {
         const current = data.current;
         const hourly = data.hourly;
@@ -1524,7 +1546,7 @@ class WeatherService {
                 const dateStr = item.dt_txt;
                 // Handle ISO date strings (YYYY-MM-DD format from Open-Meteo)
                 const date = new Date(dateStr + 'T00:00:00');
-                const dayName = days[date.getDay()];
+                const dayName = this.formatDateWithMonth(date);
                 
                 html += `
                     <div class="forecast-item">
@@ -1786,40 +1808,57 @@ class MoonService {
                 // Dark circle (new moon)
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
                 break;
+                
             case 'Waxing Crescent':
-                // Right side lit (crescent on left)
+                // Right side lit - small crescent on right
+                // Draw dark background, then lit crescent using path with evenodd fill rule
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
-                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 0 ${center} ${center - radius} Z" fill="#ffd700"/>`;
+                const crescentX = center - radius * 0.5;
+                const shadowRadius = radius * 0.9;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius} ${radius} 0 0 1 ${center} ${center - radius} M ${crescentX} ${center} A ${shadowRadius} ${shadowRadius} 0 1 1 ${crescentX} ${center - 0.1} Z" fill="#ffd700" fill-rule="evenodd"/>`;
                 break;
+                
             case 'First Quarter':
                 // Right half lit
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
                 svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} L ${center} ${center} Z" fill="#ffd700"/>`;
                 break;
+                
             case 'Waxing Gibbous':
-                // Mostly lit, left side dark
+                // Mostly lit, small dark crescent on left
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
-                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 1 ${center} ${center - radius} Z" fill="#333"/>`;
+                const gibbousX = center + radius * 0.5;
+                const gibbousShadowRadius = radius * 0.9;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius} ${radius} 0 0 0 ${center} ${center - radius} M ${gibbousX} ${center} A ${gibbousShadowRadius} ${gibbousShadowRadius} 0 1 0 ${gibbousX} ${center - 0.1} Z" fill="#333" fill-rule="evenodd"/>`;
                 break;
+                
             case 'Full Moon':
                 // Fully lit circle
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
                 break;
+                
             case 'Waning Gibbous':
-                // Mostly lit, right side dark
+                // Mostly lit, small dark crescent on right
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
-                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 0 ${center} ${center - radius} Z" fill="#333"/>`;
+                const waningGibbousX = center - radius * 0.5;
+                const waningGibbousShadowRadius = radius * 0.9;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 1 ${center} ${center + radius} A ${radius} ${radius} 0 0 1 ${center} ${center - radius} M ${waningGibbousX} ${center} A ${waningGibbousShadowRadius} ${waningGibbousShadowRadius} 0 1 0 ${waningGibbousX} ${center - 0.1} Z" fill="#333" fill-rule="evenodd"/>`;
                 break;
+                
             case 'Last Quarter':
                 // Left half lit
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
                 svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} L ${center} ${center} Z" fill="#ffd700"/>`;
                 break;
+                
             case 'Waning Crescent':
-                // Left side lit (crescent on right)
+                // Left side lit - small crescent on left
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#333" stroke="#666" stroke-width="1"/>`;
-                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius * 0.3} ${radius * 0.3} 0 0 1 ${center} ${center - radius} Z" fill="#ffd700"/>`;
+                const waningCrescentX = center + radius * 0.5;
+                const waningCrescentShadowRadius = radius * 0.9;
+                svg += `<path d="M ${center} ${center - radius} A ${radius} ${radius} 0 0 0 ${center} ${center + radius} A ${radius} ${radius} 0 0 0 ${center} ${center - radius} M ${waningCrescentX} ${center} A ${waningCrescentShadowRadius} ${waningCrescentShadowRadius} 0 1 0 ${waningCrescentX} ${center - 0.1} Z" fill="#ffd700" fill-rule="evenodd"/>`;
                 break;
+                
             default:
                 // Default to full moon
                 svg += `<circle cx="${center}" cy="${center}" r="${radius}" fill="#ffd700" stroke="#666" stroke-width="1"/>`;
@@ -1827,6 +1866,28 @@ class MoonService {
         
         svg += `</svg>`;
         return svg;
+    }
+    
+    formatDateWithMonth(date) {
+        // Format date as "Thursday December 4th"
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        
+        const dayName = days[date.getDay()];
+        const monthName = months[date.getMonth()];
+        const day = date.getDate();
+        
+        // Add ordinal suffix
+        let suffix = 'th';
+        if (day === 1 || day === 21 || day === 31) {
+            suffix = 'st';
+        } else if (day === 2 || day === 22) {
+            suffix = 'nd';
+        } else if (day === 3 || day === 23) {
+            suffix = 'rd';
+        }
+        
+        return `${dayName} ${monthName} ${day}${suffix}`;
     }
     
     calculateDeerActivityScore(temp, windSpeed, moonPhase, hour, sunrise, sunset) {
@@ -1946,7 +2007,7 @@ class MoonService {
             
             daysShown++;
             
-            const dayName = days[dayDate.getDay()];
+            const dayName = this.formatDateWithMonth(dayDate);
             const moonPhase = this.calculateMoonPhase(dayDate);
             const sunrise = daily.sunrise[i];
             const sunset = daily.sunset[i];
@@ -1960,12 +2021,14 @@ class MoonService {
             dayEnd.setDate(dayEnd.getDate() + 1);
             
             // Define time ranges: [startHour, endHour, label]
-            // Only show the 5 main time ranges that are displayed
+            // Show all 7 time ranges with individual scores
             const timeRanges = [
                 [6, 8, '6am-8am'],
                 [8, 10, '8am-10am'],
+                [10, 12, '10am-12pm'],
                 [12, 14, '12pm-2pm'],
                 [14, 16, '2pm-4pm'],
+                [16, 18, '4pm-6pm'],
                 [18, 20, '6pm-8pm']
             ];
             
