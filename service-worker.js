@@ -1,5 +1,5 @@
 // Update this version number when you deploy a new version
-const APP_VERSION = '1.0.13';
+const APP_VERSION = '1.0.15';
 const CACHE_NAME = `hunting-pro-${APP_VERSION}`;
 const urlsToCache = [
     './',
@@ -47,6 +47,32 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+    
+    // Never cache API requests - always fetch fresh data
+    const isAPIRequest = url.hostname.includes('openweathermap.org') || 
+                         url.hostname.includes('nominatim.openstreetmap.org') ||
+                         url.hostname.includes('api.') ||
+                         url.pathname.includes('/api/');
+    
+    if (isAPIRequest) {
+        // Network only for API requests - never cache, always fetch fresh
+        event.respondWith(
+            fetch(event.request)
+                .then((fetchResponse) => {
+                    return fetchResponse;
+                })
+                .catch(() => {
+                    // If network fails, return error response
+                    return new Response(JSON.stringify({ error: 'Network request failed' }), {
+                        status: 503,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                })
+        );
+        return;
+    }
+    
     // For HTML files, always try network first to get updates
     if (event.request.destination === 'document' || 
         event.request.url.includes('index.html') ||

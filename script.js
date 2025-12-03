@@ -898,7 +898,7 @@ class WeatherService {
     async getCoordinatesFromZip(zipCode) {
         // Use a free geocoding service (Nominatim from OpenStreetMap)
         try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zipCode}&country=US&format=json&limit=1`);
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zipCode}&country=US&format=json&limit=1`, { cache: 'no-store' });
             const data = await response.json();
             
             if (data && data.length > 0) {
@@ -923,9 +923,11 @@ class WeatherService {
         }
         
         // Fetch current weather and 5-day forecast from OpenWeatherMap
+        // Use cache: 'no-store' to ensure fresh data on mobile
+        const fetchOptions = { cache: 'no-store' };
         const [currentResponse, forecastResponse] = await Promise.all([
-            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`),
-            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`)
+            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`, fetchOptions),
+            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`, fetchOptions)
         ]);
         
         if (!currentResponse.ok || !forecastResponse.ok) {
@@ -1623,7 +1625,7 @@ class MoonService {
     
     async getCoordinatesFromZip(zipCode) {
         try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zipCode}&country=US&format=json&limit=1`);
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?postalcode=${zipCode}&country=US&format=json&limit=1`, { cache: 'no-store' });
             const data = await response.json();
             
             if (data && data.length > 0) {
@@ -1648,9 +1650,11 @@ class MoonService {
         }
         
         // Fetch current weather and 5-day forecast from OpenWeatherMap
+        // Use cache: 'no-store' to ensure fresh data on mobile
+        const fetchOptions = { cache: 'no-store' };
         const [currentResponse, forecastResponse] = await Promise.all([
-            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`),
-            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`)
+            fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`, fetchOptions),
+            fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${window.WEATHER_API_KEY}&units=imperial`, fetchOptions)
         ]);
         
         if (!currentResponse.ok || !forecastResponse.ok) {
