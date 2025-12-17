@@ -2608,6 +2608,11 @@ class LocationSharingService {
                     if (!firebase.apps.length) {
                         firebase.initializeApp(firebaseConfig);
                     }
+                    // Authenticate with anonymous auth (required for Firebase security rules)
+                    const auth = firebase.auth();
+                    auth.signInAnonymously().catch(authError => {
+                        console.warn('Firebase auth failed:', authError);
+                    });
                     this.database = firebase.database();
                 } catch (error) {
                     console.warn('Firebase initialization failed:', error);
